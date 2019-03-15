@@ -7,6 +7,8 @@ use pocketmine\command\CommandSender;
 use pocketmine\event\Listener;
 use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\item\Durable;
+use pocketmine\item\enchantment\Enchantment;
+use pocketmine\item\enchantment\EnchantmentInstance;
 use pocketmine\network\mcpe\protocol\ModalFormResponsePacket;
 use pocketmine\network\mcpe\protocol\ModalFormRequestPacket;
 use pocketmine\plugin\PluginBase;
@@ -34,7 +36,8 @@ class Main extends PluginBase implements Listener {
                 ["text" => "名前"],
                 ["text" => "説明"],
                 ["text" => "メタ値"],
-                ["text" => "個数"]
+                ["text" => "個数"],
+                ["text" => "エンチャント"]
             ]
         ];
         $this->sendForm($sender, $form, [$this, "onMenu"]);
@@ -101,6 +104,19 @@ class Main extends PluginBase implements Listener {
                     ]
                 ];
                 $this->sendForm($player, $form, [$this, "onChangeCount"]);
+                break;
+            case 4:
+                $enchantments = $item->getEnchantments();
+                $form = [
+                    "type" => "form",
+                    "title" => "選択",
+                    "content" => "§7ボタンを押してください",
+                    "buttons" => array_map(function($enchant) {
+                        return ["text" => $enchant->getType()->getName().":".$enchant->getLevel()];
+                    }, $enchantments)
+                ];
+                $form["buttons"][] = ["text" => "<追加する>"];
+                $this->sendForm($player, $form, [$this, "onSelectEnchant"], $enchantments);
                 break;
         }
     }
@@ -170,6 +186,68 @@ class Main extends PluginBase implements Listener {
             return;
         }
         $item->setCount($count);
+        $player->getInventory()->setItemInHand($item);
+        $player->sendMessage("変更しました");
+    }
+
+    public function onSelectEnchant($player, $data, $enchantments) {
+        if($data === null) return;
+        if(!isset($enchantments[$data])) {
+            $form = [
+                "type" => "custom_form",
+                "title" => "エンチャント",
+                "content" => [
+                    [
+                        "type" => "input",
+                        "text" => "エンチャントの名前かid"
+                    ],
+                    [
+                        "type" => "input",
+                        "text" => "レベル"
+                    ]
+                ]
+            ];
+            $this->sendForm($player, $form, [$this, "onAddEnchant"]);
+        } else {
+            $enchant = $enchantments[$data];
+            $form = [
+                "type" => "custom_form",
+                "title" => "エンチャント",
+                "content" => [
+                    [
+                        "type" => "label",
+                        "text" => $enchant->getType()->getName()."  id:".$enchant->getId()
+                    ],
+                    [
+                        "type" => "input",
+                        "text" => "レベル",
+                        "default" => (string)$enchant->getLevel()
+                    ],
+                    [
+                        "type" => "toggle",
+                        "text" => "削除する"
+                    ]
+                ]
+            ];
+            $this->sendForm($player, $form, [$this, "onAddEnchant"], $enchant->getId());
+        }
+    }
+
+    public function onAddEnchant($player, $data, $id = null) {
+        if($data === null) return;
+        if($id === null) $id = $data[0];
+        if(is_numeric($id)) {
+            $enchant = Enchantment::getEnchantment((int)$id);
+        } else {
+            $enchant = Enchantment::getEnchantmentByName($id);
+        }
+        if(!($enchant instanceof Enchantment)) {
+            $player->sendMessage("エンチャントが見つかりません");
+            return;
+        }
+        $level = (int)$data[1];
+        $item = $player->getInventory()->getItemInHand();
+        $item->addEnchantment(new EnchantmentInstance($enchant, $level));
         $player->getInventory()->setItemInHand($item);
         $player->sendMessage("変更しました");
     }

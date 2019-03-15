@@ -1,0 +1,12 @@
+---
+name: ItemEditor
+main: aieuo\itemEditor\Main
+version: 0.1
+api: 3.0.0
+author: aieuo
+commands:
+ edititem:
+  description: アイテムの情報を変更する
+  usage: /edititem
+  permission: op
+...

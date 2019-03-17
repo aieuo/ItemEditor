@@ -37,7 +37,8 @@ class Main extends PluginBase implements Listener {
                 ["text" => "説明"],
                 ["text" => "メタ値"],
                 ["text" => "個数"],
-                ["text" => "エンチャント"]
+                ["text" => "エンチャント"],
+                ["text" => "耐久値が<減る/減らない>ようにする"],
             ]
         ];
         $this->sendForm($sender, $form, [$this, "onMenu"]);
@@ -117,6 +118,19 @@ class Main extends PluginBase implements Listener {
                 ];
                 $form["buttons"][] = ["text" => "<追加する>"];
                 $this->sendForm($player, $form, [$this, "onSelectEnchant"], $enchantments);
+                break;
+            case 5:
+                $unbreakable = ($item instanceof Durable and $item->isUnbreakable());
+                $form = [
+                    "type" => "form",
+                    "title" => "選択",
+                    "content" => "今は: 耐久値が減りま".($unbreakable ? "せん" : "す"),
+                    "buttons" => [
+                        ["text" => "耐久値が減るようにする"],
+                        ["text" => "耐久値が減らないようにする"]
+                    ]
+                ];
+                $this->sendForm($player, $form, [$this, "onChangeUnbreakable"]);
                 break;
         }
     }
@@ -252,6 +266,17 @@ class Main extends PluginBase implements Listener {
         $player->sendMessage("変更しました");
     }
 
+    public function onChangeUnbreakable($player, $data) {
+        if($data === null) return;
+        $item = $player->getInventory()->getItemInHand();
+        if(!($item instanceof Durable)) {
+            $player->sendMessage("そのアイテムには適用できません");
+            return;
+        }
+        $item->setUnbreakable((bool)$data);
+        $player->getInventory()->setItemInHand($item);
+        $player->sendMessage("耐久値がへ".((bool)$data ? "らない" : "る")."ようにしました");
+    }
 
 
 
@@ -262,7 +287,7 @@ class Main extends PluginBase implements Listener {
         return $json;
     }
 
-    public function sendForm($player, $form, $callable = null, ...$datas){
+    public function sendForm($player, $form, $callable = null, ...$datas) {
         while(true) {
             $id = mt_rand(0, 999999999);
             if(!isset($this->forms[$id])) break;

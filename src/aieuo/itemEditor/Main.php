@@ -5,6 +5,7 @@ namespace aieuo\itemEditor;
 use pocketmine\command\Command;
 use pocketmine\command\CommandSender;
 use pocketmine\event\Listener;
+use pocketmine\event\block\BlockBreakEvent;
 use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\item\Durable;
 use pocketmine\item\enchantment\Enchantment;
@@ -12,6 +13,11 @@ use pocketmine\item\enchantment\EnchantmentInstance;
 use pocketmine\network\mcpe\protocol\ModalFormResponsePacket;
 use pocketmine\network\mcpe\protocol\ModalFormRequestPacket;
 use pocketmine\plugin\PluginBase;
+use pocketmine\nbt\NBT;
+use pocketmine\nbt\tag\CompoundTag;
+use pocketmine\nbt\tag\ListTag;
+use pocketmine\nbt\tag\ShortTag;
+use pocketmine\nbt\tag\StringTag;
 
 class Main extends PluginBase implements Listener {
 
@@ -39,12 +45,35 @@ class Main extends PluginBase implements Listener {
                 ["text" => "個数"],
                 ["text" => "エンチャント"],
                 ["text" => "耐久値が<減る/減らない>ようにする"],
+                ["text" => "<壊せる/壊せない>ブロックを設定する"]
             ]
         ];
         $this->sendForm($sender, $form, [$this, "onMenu"]);
         return true;
     }
 
+
+    public function onBreak(BlockBreakEvent $event) {
+        $item = $event->getItem();
+        if(($blocks = $item->getNamedTagEntry("CannotDestroy")) instanceof ListTag) {
+            $block = $event->getBlock();
+            foreach($blocks as $cannot) {
+                if($cannot->getShort("id") == $block->getId() and $cannot->getShort("damage") == $block->getDamage()) {
+                    $event->setCancelled();
+                }
+            }
+        }
+        if(($blocks = $item->getNamedTagEntry("CanDestroy")) instanceof ListTag) {
+            $block = $event->getBlock();
+            $found = false;
+            foreach($blocks as $cannot) {
+                if($cannot->getShort("id") == $block->getId() and $cannot->getShort("damage") == $block->getDamage()) {
+                    $found = true;
+                }
+            }
+            if(!$found) $event->setCancelled();
+        }
+    }
     public function onMenu($player, $data) {
         if($data === null) return;
         $item = $player->getInventory()->getItemInHand();
@@ -131,6 +160,35 @@ class Main extends PluginBase implements Listener {
                     ]
                 ];
                 $this->sendForm($player, $form, [$this, "onChangeUnbreakable"]);
+                break;
+            case 6:
+                $cannotDestroyBlocks = $item->getNamedTagEntry("CannotDestroy") ?? new ListTag("CannotDestroy", [], NBT::TAG_Compound);;
+                $cannotDestroy = [];
+                foreach($cannotDestroyBlocks as $cannot) {
+                    $cannotDestroy[] = $cannot->getShort("id").":".$cannot->getShort("damage");
+                }
+                $canDestroyBlocks = $item->getNamedTagEntry("CanDestroy") ?? new ListTag("CanDestroy", [], NBT::TAG_Compound);;
+                $canDestroy = [];
+                foreach($canDestroyBlocks as $can) {
+                    $canDestroy[] = $can->getShort("id").":".$can->getShort("damage");
+                }
+                if(count($cannotDestroy) == 0 and count($canDestroy) == 0) {
+                    $content = "全てのブロックが壊せます";
+                } elseif(count($cannotDestroy) == 0) {
+                    $content = implode(", ", $canDestroy)." だけが壊せます";
+                } else {
+                    $content = implode(", ", $cannotDestroy)." 以外が壊せます";
+                }
+                $form = [
+                    "type" => "form",
+                    "title" => "選択",
+                    "content" => $content,
+                    "buttons" => [
+                        ["text" => "壊せないブロック"],
+                        ["text" => "壊せるブロック"]
+                    ]
+                ];
+                $this->sendForm($player, $form, [$this, "onSelectDestroy"]);
                 break;
         }
     }
@@ -277,6 +335,75 @@ class Main extends PluginBase implements Listener {
         $player->getInventory()->setItemInHand($item);
         $player->sendMessage("耐久値がへ".((bool)$data ? "らない" : "る")."ようにしました");
     }
+
+    public function onSelectDestroy($player, $data) {
+        if($data === null) return;
+        $item = $player->getInventory()->getItemInHand();
+        $type = $data == 0 ? "CannotDestroy" : "CanDestroy";
+        $blocks = $item->getNamedTagEntry($type) ?? new ListTag($type, [], NBT::TAG_Compound);
+        $buttons = [];
+        foreach($blocks as $entry) {
+            $buttons[] = ["text" => $entry->getShort("id").":".$entry->getShort("damage")];
+        }
+        $buttons[] = ["text" => "<追加する>"];
+        $form = [
+            "type" => "form",
+            "title" => "選択",
+            "content" => "§7ボタンを押してください",
+            "buttons" => $buttons
+        ];
+        $this->sendForm($player, $form, [$this, "onSelectCanDestroy"], $blocks, $type);
+    }
+
+    public function onSelectCanDestroy($player, $data, $blocks, $type) {
+        if($data === null) return;
+        $form = [
+            "type" => "custom_form",
+            "title" => "壊せ".($type == "CanDestroy" ? "る" : "ない")."ブロック",
+            "content" => [
+                [
+                    "type" => "input",
+                    "text" => "id",
+                    "default" => isset($blocks[$data]) ? $blocks[$data]->getShort("id").":".$blocks[$data]->getShort("damage") : ""
+                ],
+                [
+                    "type" => "toggle",
+                    "text" => "削除する"
+                ]
+            ]
+        ];
+        $this->sendForm($player, $form, [$this, "onChangeCanDestroy"], $blocks, $data);
+    }
+
+    public function onChangeCanDestroy($player, $data, $blocks, $num) {
+        if($data === null) return;
+        $item = $player->getInventory()->getItemInHand();
+        $ids = explode(":", $data[0]);
+        $found = false;
+        foreach($blocks as $k => $entry) {
+            if($entry->getShort("id") == $ids[0] and $entry->getShort("damage") == $ids[1]) {
+                if($data[1]) $blocks->remove($k);
+                $found = true;
+                break;
+            }
+        }
+        if(!$found and $data[1]) {
+            $player->sendMessage("idが見つかりませんでした");
+        } elseif(!$found) {
+            $blocks->push(new CompoundTag("", [
+                new ShortTag("id", (int)$ids[0]),
+                new ShortTag("damage", (int)$ids[1])
+            ]));
+            $player->sendMessage("追加しました");
+        } elseif($data[1]) {
+            $player->sendMessage("削除しました");
+        } else {
+            $player->sendMessage("そのidはすでに追加済みです");
+        }
+        $item->setNamedTagEntry($blocks);
+        $player->getInventory()->setItemInHand($item);
+    }
+
 
 
 
